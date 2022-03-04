@@ -1,0 +1,207 @@
+﻿@page "/app/{AppIdBase64}"
+@inject HttpClient httpClient
+@using System.Text.Json
+@using AppInspectDataModels
+@inject FrontendSettings settings
+
+<PageTitle>AppInspect - App - @appId</PageTitle>
+
+@if (appEntryAllRecords != null)
+{
+    <table class="table table-bordered table-secondary">
+        <tbody>
+            <tr>
+                <th class="col-sm-3">App Id</th>
+                <td class="col-sm-9">@appEntryAllRecords.Id</td>
+            </tr>
+            <tr>
+                <th class="col-sm-3">Title</th>
+                <td class="col-sm-9">@appEntryAllRecords.Title</td>
+            </tr>
+            <tr>
+                <th class="col-sm-3">APKs in Archive</th>
+                <td class="col-sm-9">
+                    @appEntryAllRecords.FileRecords.Count() &nbsp;&nbsp;&nbsp;&nbsp;
+
+                    @if (appEntryAllRecords.FileRecords.Count() > 0)
+                    {
+                        <a href="apkanalysis/@(Common.EncodeBase64(appEntryAllRecords.Id))" class="link-primary me-3" target="_blank"><span class="oi oi-beaker"></span> Analyse APKs</a>
+                    }
+
+                    <a href="apkretrieval/@(Common.EncodeBase64(appEntryAllRecords.Id))" class="link-primary" target="_blank"><span class="oi oi-cloud-download"></span> Try to retrieve a new version of APK</a>
+
+                </td>
+            </tr>
+            <tr>
+                <th class="col-sm-3">Records of App Details</th>
+                <td class="col-sm-9">
+                    @appEntryAllRecords.AppStoreRecords.Count() &nbsp;&nbsp;&nbsp;&nbsp;
+                    <a href="@(new Uri(settings.AppInspectAPIUrl!, $"store/appdetails/{appEntryAllRecords.Id}/download/csv"))" class="link-primary me-2" target="_blank"><span class="oi oi-spreadsheet"></span> Download CSV</a>&nbsp;
+                    <a href="@(new Uri(settings.AppInspectAPIUrl!, $"store/appdetails/{appEntryAllRecords.Id}/download/json"))" class="link-primary" target="_blank"><span class="oi oi-code"></span> Download JSON</a>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+    @if (@appEntryAllRecords.FileRecords.Count() > 0)
+    {
+        <h3 class="mt-3">APK files</h3>
+        <table class="table table-bordered table-light mt-2">
+            <thead>
+                <tr>
+                    <th class="col-sm-2">Retrieved</th>
+                    <th class="col-sm-3">Version Name</th>
+                    <th class="col-sm-2">Version Code</th>
+                    <th class="col-sm-2">SHA256</th>
+                    <th class="col-sm-auto">Signature</th>
+                    <th class="col-1">APK</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var record in fileRecordsWindow!)
+                {
+                    <tr>
+                        <td>@record.Created.ToLongTimeString() @record.Created.ToShortDateString()</td>
+                        <td>@record.VersionName</td>
+                        <td>@record.VersionCode</td>
+                        <td><input class="form-control" type="text" value=@record.SHA256 readonly /></td>
+                        <td>
+                            <textarea class="form-control form-control-sm" readonly rows="1" value=@Common.GetAPKSignatureText(record)></textarea>
+                        </td>
+                        <td><a href="@(new Uri(settings.AppInspectAPIUrl!, $"app/download/apk/{record.APKBaseFilenameInArchive}"))" class="link-primary" target="_blank"><span class="oi oi-data-transfer-download"></span> Download</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <Paginator PageCount=@fileRecordPageCount @bind-PageIndex=@fileRecordPageIndex @bind-PaginatorStart=@fileRecordPaginatorStart PageSize=@fileRecordPageSize></Paginator>
+    }
+
+    @if (appEntryAllRecords.AppStoreRecords.Count() > 0)
+    {
+        <h3 class="mt-3">Records of App Details</h3>
+        <table class="table table-bordered table-light mt-2">
+            <thead>
+                <tr>
+                    <th class="col-sm-2">Retrieved</th>
+                    <th class="col-sm-1">Locale</th>
+                    <th class="col-auto">Details</th>
+                    <th class="col-sm-2">&nbsp;</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var record in appStoreRecordResultsPagingWindow!)
+                {
+                    <tr>
+                        <td>@record.Retrieved.ToLongTimeString() @record.Retrieved.ToShortDateString()</td>
+                        <td>
+                            @record.StoreCountry @record.StoreLanguage
+                        </td>
+                        <td>
+                            <textarea class="form-control form-control-sm" readonly rows="7" value=@record.PrettifiedDetails></textarea>
+                        </td>
+                        <td>
+                            <a href="@record.Url" class="link-primary" target="_blank"><span class="oi oi-external-link"></span> Play store</a><br /><br />
+                            <a href="@(new Uri(settings.AppInspectAPIUrl!, $"store/appdetails/record/{record.RecordId}/download/json"))" class="link-primary" target="_blank"><span class="oi oi-code"></span> Download JSON</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <Paginator PageCount=@appStoreRecordResultPageCount @bind-PageIndex=appStoreRecordResultPageIndex @bind-PaginatorStart=@appStoreRecordResultPaginatorStart PageSize=@appStoreRecordResultPageSize></Paginator>
+    }
+}
+else if (alertMessage != null)
+{
+    <div class="mt=3">
+        <Alert @bind-Message="alertMessage" AlertType="Info" Dismissable=false></Alert>
+    </div>
+}
+else
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-warning" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+}
+
+@code {
+
+    private string? appId { get; set; }
+    private string? alertMessage { get; set; }
+
+    [Parameter]
+    public string? AppIdBase64
+    {
+        get { if (!string.IsNullOrEmpty(appId)) return Common.EncodeBase64(appId); return null; }
+        set { if (!string.IsNullOrEmpty(value)) appId = Common.DecodeBase64(value); else appId = null; }
+    }
+
+    private AppFileRecord[]? fileRecordsWindow
+    {
+        get { return (appEntryAllRecords == null) ? null : appEntryAllRecords.FileRecords.Skip(fileRecordPageIndex * fileRecordPageSize).Take(fileRecordPageSize).ToArray(); }
+    }
+
+    private int fileRecordPageSize { get; set; } = 5;
+    private int fileRecordPageCount { get; set; } = 0;
+    private int fileRecordPageIndex { get; set; } = 0;
+    private int fileRecordPaginatorStart { get; set; } = 0;
+
+    private AppStoreRecordResult[]? appStoreRecordResultsPagingWindow
+    {
+        get { return (appEntryAllRecords == null) ? null : appEntryAllRecords.AppStoreRecords.Skip(appStoreRecordResultPageIndex * appStoreRecordResultPageSize).Take(appStoreRecordResultPageSize).ToArray(); }
+    }
+
+    private int appStoreRecordResultPageSize { get; set; } = 5;
+    private int appStoreRecordResultPageCount { get; set; } = 0;
+    private int appStoreRecordResultPageIndex { get; set; } = 0;
+    private int appStoreRecordResultPaginatorStart { get; set; } = 0;
+
+    private AppEntryAllRecords? appEntryAllRecords { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await refresh();
+    }
+
+    private async Task refresh()
+    {
+        if (appId != null)
+        {
+            try
+            {
+                appEntryAllRecords = await httpClient.GetFromJsonAsync<AppEntryAllRecords?>($"app/{appId}");
+
+                if (appEntryAllRecords != null)
+                {
+                    if (appEntryAllRecords.FileRecords.Count() > 0)
+                    {
+                        int recordCount = appEntryAllRecords.FileRecords.Count();
+                        int remainder = recordCount % fileRecordPageSize;
+                        fileRecordPageCount = ((recordCount - remainder) / fileRecordPageSize) + ((remainder > 0) ? 1 : 0);
+                        fileRecordPageIndex = 0;
+                        fileRecordPaginatorStart = 0;
+                    }
+
+                    if (appEntryAllRecords.AppStoreRecords.Count() > 0)
+                    {
+                        int recordCount = appEntryAllRecords.AppStoreRecords.Count();
+                        int remainder = recordCount % appStoreRecordResultPageSize;
+                        appStoreRecordResultPageCount = ((recordCount - remainder) / appStoreRecordResultPageSize) + ((remainder > 0) ? 1 : 0);
+                        appStoreRecordResultPageIndex = 0;
+                        appStoreRecordResultPaginatorStart = 0;
+                    }
+                }
+            }
+            catch
+            {
+                alertMessage = "The app details are being retrieved or unavailable.  Please try again later if you submitted a query not long ago.";
+            }
+
+            StateHasChanged();
+        }
+    }
+}

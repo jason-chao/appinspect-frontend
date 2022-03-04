@@ -1,0 +1,306 @@
+﻿@page "/apkstorequery"
+@using AppInspectDataModels
+@inject FrontendSettings settings
+@inject HttpClient Http
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
+@using System.Text.Encodings.Web
+
+
+<PageTitle>AppInspect - App Store Query</PageTitle>
+
+<h1>App Store Query</h1>
+
+@if (!isRPCConnected)
+{
+    <div class="mt-3">
+        <Alert Message="Connecting to the service ..." AlertType="Info" Dismissable=@false></Alert>
+    </div>
+}
+
+<form>
+    <fieldset disabled=@isInputDisabled>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">Store</label>
+            <div class="col-sm-5">
+                <select class="form-select" @bind="storeField" disabled>
+                    <option value="googleplay" selected>Google Play</option>
+                    <option value="appstore">Apple App Store</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">Method</label>
+            <div class="col-sm-5">
+                <select class="form-select" @bind="methodField">
+                    <option value="search" selected>Search apps</option>
+                    <option value="app">Get app full details</option>
+                    <option value="similar">Get similar apps</option>
+                    <option value="developer">Get developer's apps</option>
+                </select>
+            </div>
+        </div>
+
+
+        @if (methodField == "search")
+        {
+            <div class="row mt-3">
+                <label class="form-label col-sm-2 text-bold fw-bold">Term</label>
+                <div class="col-sm-10">
+                    <input class="form-control" type="text" @bind="termField" />
+                </div>
+            </div>
+        }
+        else if (methodField == "app" || methodField == "similar")
+        {
+            <div class="row mt-3">
+                <label class="form-label col-sm-2 text-bold fw-bold">App Id</label>
+                <div class="col-sm-10">
+                    <input class="form-control" placeholder="put an app id or a Google Play link" type="text" @bind="appIdOrUrlField" />
+                </div>
+            </div>
+        }
+        else if (methodField == "developer")
+        {
+            <div class="row mt-3">
+                <label class="form-label col-sm-2 text-bold fw-bold">Developer</label>
+                <div class="col-sm-10">
+                    <input class="form-control" type="text" @bind="devIdField" />
+                </div>
+            </div>
+        }
+
+
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">Country</label>
+            <div class="col-sm-5">
+                <select class="form-select" @bind="countryCodeField">
+                    @foreach (var countryCode in Common.GetCountryCodes())
+                    {
+                        <option value="@countryCode.Code">@countryCode.Name (@countryCode.Code)</option>
+                    }
+                </select>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">Language</label>
+            <div class="col-sm-5">
+                <select class="form-select" @bind="languageCodeField">
+                    @foreach (var languageCode in Common.GetLanguageCodes())
+                    {
+                        <option value="@languageCode.Code">@languageCode.Name (@languageCode.Code)</option>
+                    }
+                </select>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2">APK retrieval</label>
+            <div class="col-sm-10">
+                <input class="form-check-input" type="checkbox" id="autoDownloadApksCheckbox" @bind="autoRetrieveApks">
+                <label class="form-check-label" for="autoDownloadApksCheckbox">
+                    Automatically retrieve the APK(s)
+                </label>
+            </div>
+        </div>
+
+        @if ((new string[] { "search", "developer" }).Contains(methodField))
+        {
+            <div class="row mt-3">
+                <label class="form-label col-sm-2"><abbr title="The maximum number of records to be retrieved.">Limit</abbr></label>
+                <div class="col-sm-10">
+                    <input class="form-control" type="number" @bind="recordLimitField" min="1" max="1000">
+                </div>
+            </div>
+        }
+
+        <div class="row mt-4">
+            <button type="button" class="btn btn-primary mb-3" @onclick="submitQuery">Run</button>
+        </div>
+
+    </fieldset>
+</form>
+
+<Alert @bind-Message="alertMessage"></Alert>
+
+<div class="mt-5">
+    <AppStoreQueryResult TaskId=@lastTaskId @ref="appStoreQueryResult"></AppStoreQueryResult>
+</div>
+
+@code {
+
+    private HubConnection? hubConnection;
+
+    private bool isAnalysisRunning { get; set; }
+    private bool isRPCConnected { get { return hubConnection?.State == HubConnectionState.Connected; } }
+    private bool isInputDisabled { get { return isAnalysisRunning || (!isRPCConnected); } }
+
+    private string? storeField { get; set; } = "googleplay";
+    public string? methodField { get; set; } = "search";
+    private string? termField { get; set; }
+    private string? devIdField { get; set; }
+    private string? _appIdField { get; set; }
+    private string? appIdOrUrlField
+    {
+        get => _appIdField; set
+        {
+            _appIdField = null;
+
+            if (string.IsNullOrEmpty(value))
+                return;
+
+            var appIdInUrl = Common.GetAppIdFromGooglePlayLink(value);
+
+            if (!string.IsNullOrEmpty(appIdInUrl))
+            {
+                _appIdField = appIdInUrl;
+            }
+            else
+            {
+                if (FormattingUtility.IsAppIdValid(value))
+                    _appIdField = value;
+            }
+        }
+    }
+    private string countryCodeField { get; set; } = "US";
+    private string languageCodeField { get; set; } = "en";
+    private int recordLimitField { get; set; } = 20;
+    private bool autoRetrieveApks { get; set; }
+
+    private string? alertMessage { get; set; }
+
+    private string? lastTaskId { get; set; } = null;
+
+    private AppStoreQueryResult? appStoreQueryResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(settings.AppInspectRPCUrl!.ToString())
+            .Build();
+
+        hubConnection.On<string>("TaskCreated", (taskId) =>
+        {
+            lastTaskId = taskId;
+            isAnalysisRunning = true;
+            StateHasChanged();
+        });
+
+        hubConnection.On<string>("TaskStatusChanged", async (taskId) =>
+        {
+            if (lastTaskId == taskId)
+            {
+                isAnalysisRunning = false;
+                await appStoreQueryResult!.Refresh();
+                StateHasChanged();
+            }
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    private void showErrorMessage(string message)
+    {
+        alertMessage = message;
+    }
+
+    private void clearErrorMessage()
+    {
+        alertMessage = null;
+    }
+
+    private bool validateFields()
+    {
+        clearErrorMessage();
+
+        string fieldName = "valid input";
+        string? fieldValue = null;
+
+        switch (methodField)
+        {
+            case "search":
+                {
+                    fieldName = "a search term";
+                    fieldValue = termField;
+                }
+                break;
+            case "app":
+            case "similar":
+                {
+                    fieldName = "an app id";
+                    fieldValue = _appIdField;
+                }
+                break;
+            case "developer":
+                {
+                    fieldName = "a developer name";
+                    fieldValue = devIdField;
+                }
+                break;
+        }
+
+        if (fieldValue == null)
+        {
+            showErrorMessage($"Please provide {fieldName}.");
+            return false;
+        }
+        else if (string.IsNullOrEmpty(fieldValue.Trim()))
+        {
+            showErrorMessage($"Please provide {fieldName}.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task submitQuery()
+    {
+        if (!validateFields())
+            return;
+
+        string? queryInJson = null;
+        var serializerOptions = new JsonSerializerOptions() { Encoder = JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All) };
+
+        switch (methodField)
+        {
+            case "search":
+                {
+                    var gplayQueryArguments = new { term = termField, country = countryCodeField, lang = languageCodeField, num = recordLimitField };
+                    queryInJson = JsonSerializer.Serialize(gplayQueryArguments, serializerOptions);
+                }
+                break;
+            case "app":
+            case "similar":
+                {
+                    var gplayQueryArguments = new { appId = _appIdField, country = countryCodeField, lang = languageCodeField };
+                    queryInJson = JsonSerializer.Serialize(gplayQueryArguments, serializerOptions);
+                }
+                break;
+            case "developer":
+                {
+                    var gplayQueryArguments = new { devId = devIdField, country = countryCodeField, lang = languageCodeField, num = recordLimitField };
+                    queryInJson = JsonSerializer.Serialize(gplayQueryArguments, serializerOptions);
+                }
+                break;
+        }
+
+        if ((!string.IsNullOrEmpty(queryInJson)) && (!string.IsNullOrEmpty(methodField)))
+        {
+            var query = new AppStoreQueryTaskArguments()
+                {
+                    QueryMethod = methodField,
+                    QueryInJson = queryInJson,
+                    AutomaticAPKRetrieval = autoRetrieveApks
+                };
+
+            string queryString = JsonSerializer.Serialize(query);
+
+            await hubConnection!.SendAsync("SubmitTask", $"query_{storeField}", queryString);
+        }
+    }
+
+}

@@ -1,0 +1,727 @@
+﻿@inject HttpClient httpClient
+@using System.Text.Json
+@using AppInspectDataModels
+@inject FrontendSettings settings
+
+@if (apkAnalysisResults != null)
+{
+    @if (!apkAnalysisResults.Completed.HasValue)
+    {
+        <div class="d-flex justify-content-center">
+            <div class="spinner-border text-warning" style="width: 3rem; height: 3rem;" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else
+    {
+        <table class="table table-bordered table-secondary">
+            <tbody>
+                <tr>
+                    <th class="col-sm-3">Task Id</th>
+                    <td class="col-sm-9">@apkAnalysisResults.TaskId</td>
+                </tr>
+                <tr>
+                    <th>Status</th>
+                    <td>
+                        @if (!apkAnalysisResults.Started.HasValue)
+                        {
+                            <span>Pending</span>
+
+                            <span class="spinner-border text-secondary spinner-border-sm"></span>
+                        }
+                        else if ((!apkAnalysisResults.Completed.HasValue) && (apkAnalysisResults.Started.HasValue))
+                        {
+                            <span>Started to run at @apkAnalysisResults.Started.Value.ToLongTimeString() on @apkAnalysisResults.Started.Value.ToShortDateString()</span>
+
+                            <span class="spinner-border text-secondary spinner-border-sm"></span>
+                        }
+                        else if (apkAnalysisResults.Completed.HasValue && apkAnalysisResults.Started.HasValue)
+                        {
+                            @if (apkAnalysisResults.ErrorMessage != null)
+                            {
+                                <span>Error</span>
+                            }
+                            else
+                            {
+                                <span>Completed at @apkAnalysisResults.Started.Value.ToLongTimeString() on @apkAnalysisResults.Started.Value.ToShortDateString() </span>
+                            }
+                        }
+                    </td>
+                </tr>
+                @if (apkAnalysisResults.ErrorMessage != null)
+                {
+                    <tr>
+                        <th>Technical details</th>
+                        <td>
+                            @apkAnalysisResults.ErrorMessage
+                        </td>
+                    </tr>
+                }
+                @if (apkAnalysisResults.OutputApps >= 0)
+                {
+                    <tr>
+                        <th>Number of Apps</th>
+                        <td>
+                            @apkAnalysisResults.OutputApps
+                            @if (apkAnalysisResults.OutputApks >= apkAnalysisResults.OutputApkLimit)
+                            {
+                                <span class="small">&nbsp;*&nbsp;(see 'Note on limit')</span>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (apkAnalysisResults.OutputApks >= 0)
+                {
+                    <tr>
+                        <th>Number of APKs</th>
+                        <td>
+                            @apkAnalysisResults.OutputApks
+                            @if (apkAnalysisResults.OutputApks >= apkAnalysisResults.OutputApkLimit)
+                            {
+                                <span class="small">&nbsp;*&nbsp;(see 'Note on limit')</span>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (apkAnalysisResults.OutputApks >= apkAnalysisResults.OutputApkLimit)
+                {
+                    <tr>
+                        <th>* Note on limit</th>
+                        <td>
+                            <small>The result may be incomplete because the number of APK records is close to the limit imposed (@apkAnalysisResults.OutputApkLimit).  You may consider narrowing down apps in scope or increasing the limit.</small>
+                        </td>
+                    </tr>
+                }
+                @if (apkAnalysisResults.TaskName == "task_code_scan")
+                {
+                    @if (apkAnalysisResults.InferredDevelopers != null)
+                    {
+                        <tr>
+                            <th><abbr title="Developers of classes/packages matching the query inferred from class names">Inferred developers</abbr></th>
+                            <td>
+                                Total: @apkAnalysisResults.TotalInferredDevelopers
+                                <div class="row row-cols-auto">
+                                    @foreach (var developer in apkAnalysisResults.InferredDevelopers)
+                                    {
+                                        <div class="col">@developer</div>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+                else if (new string[] { "task_tracker_domain_scan", "task_tracker_classname_scan" }.Contains(apkAnalysisResults.TaskName))
+                {
+                    @if (apkAnalysisResults.Trackers != null)
+                    {
+                        <tr>
+                            <th><abbr title="Trackers detected with package names or hardcoded domain names">Trackers</abbr></th>
+                            <td>
+                                Total: @apkAnalysisResults.TotalTrackers
+                                <div class="row row-cols-auto">
+                                    @foreach (var tracker in apkAnalysisResults.Trackers)
+                                    {
+                                        <div class="col">@tracker</div>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+
+                @if (ShowArguments)
+                {
+                    <tr>
+                        <th>Query parameters</th>
+                        <td>
+                            <textarea class="form-control form-control form-control-sm" rows="3" readonly>@apkAnalysisResults.ArgumentsPrettifed</textarea>
+                        </td>
+                    </tr>
+                }
+
+                @if (apkAnalysisResults.Records.Count() > 0)
+                {
+                    <tr>
+                        <th>Download</th>
+                        <td>
+                            <a href="@(new Uri(settings.AppInspectAPIUrl!, $"analysis/{TaskId}/download/csv"))" class="link-primary me-2" target="_blank"><span class="oi oi-spreadsheet"></span> CSV</a>&nbsp;
+                            <a href="@(new Uri(settings.AppInspectAPIUrl!, $"analysis/{TaskId}/download/json"))" class="link-primary" target="_blank"><span class="oi oi-code"></span> JSON</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        if (apkAnalysisResults.Records.Count() > 0)
+        {
+            <table class="table table-light table-striped mt-3">
+                <thead>
+                    <tr>
+                        <th class="col-sm-3">App Id</th>
+                        <th class="col-sm-4">Title</th>
+                        <th class="col-sm-1"><abbr title="Number of different verions of APKs of the app matching the query">APKs</abbr></th>
+                        <th class="col-sm-1"><abbr title="The latest version of the APK of the app in the archive">Version</abbr></th>
+                        <th class="col-sm-1">
+                            @if (apkAnalysisResults.TaskName == "task_text_search")
+                            {
+                                <abbr title="Number of files matching the query in the latest version of the APK of the app">Files</abbr>
+                            }
+                            else if (apkAnalysisResults.TaskName == "task_code_scan")
+                            {
+                                <abbr title="Number of developers of classes/packages matching the query inferred from class names">Developers</abbr>
+                            }
+                            else if (new string[] { "task_tracker_domain_scan", "task_tracker_classname_scan" }.Contains(apkAnalysisResults.TaskName))
+                            {
+                                <abbr title="Number of trackers detected with package names or hardcoded domain names">Trackers</abbr>
+                            }
+                            else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                            {
+                                <abbr title="Number of permissions that the app may use">Permissions</abbr>
+                            }
+                            else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                            {
+                                <abbr title="Number of fully qualified domain names extracted">FQDN</abbr>
+                            }
+                        </th>
+                        <th class="col-sm-1">
+                            @if (apkAnalysisResults.TaskName == "task_code_scan")
+                            {
+                                <abbr title="Number of classes/packages matching the query">Classes</abbr>
+                            }
+                            else if (apkAnalysisResults.TaskName == "task_tracker_domain_scan")
+                            {
+                                <abbr title="Number of tracker-related domain names hardcoded in the code">Domains</abbr>
+                            }
+                            else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                            {
+                                <abbr title="Number of dangerous permissions">Dangerous</abbr>
+                            }
+                            else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                            {
+                                <abbr title="Number of urls extracted">Urls</abbr>
+                            }
+                        </th>
+                        <th class="col-sm-1">&nbsp;</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var appRecord in grouppedApkAnalysisRecordPagingWindow!)
+                    {
+                        <tr>
+                            <td>
+                                @if (appRecord.AppId != null)
+                                {
+                                    @if (appRecord.AppId.Length <= 48)
+                                    {
+                                        <a href="app/@(Common.EncodeBase64(appRecord.AppId!))" class="link-secondary" target="_blank">@appRecord.AppId</a>
+                                    }
+                                    else
+                                    {
+                                        <div class="row">
+                                            <div class="col-10">
+                                                <input type="text" class="form-control" value=@appRecord.AppId readonly />
+                                            </div>
+                                            <div class="col-2">
+                                                <a href="app/@(Common.EncodeBase64(appRecord.AppId!))" class="link-secondary " target="_blank"><span class="oi oi-eye"></span></a>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                            </td>
+                            <td>@appRecord.Title</td>
+                            <td>@appRecord.ApkRecords.Count()</td>
+                            <td>@appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.VersionName</td>
+                            <td>
+                                @if (apkAnalysisResults.TaskName == "task_text_search")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.FileCount
+                                }
+                                else if (apkAnalysisResults.TaskName == "task_code_scan")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.InferredDeveloperCount
+                                }
+                                else if (new string[] { "task_tracker_domain_scan", "task_tracker_classname_scan" }.Contains(apkAnalysisResults.TaskName))
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.Trackers!.Count()
+                                }
+                                else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.Permissions!.Count()
+                                }
+                                else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.Domains!.Count()
+                                }
+                            </td>
+                            <td>
+                                @if (apkAnalysisResults.TaskName == "task_code_scan")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.Classes!.Distinct().Count()
+                                }
+                                else if (apkAnalysisResults.TaskName == "task_tracker_domain_scan")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.Domains!.Count()
+                                }
+                                else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.PermissionDangerousCount
+                                }
+                                else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                                {
+                                    @appRecord.ApkRecords.MaxBy(ar => ar.VersionCode)!.Urls!.Count()
+                                }
+                            </td>
+                            <td><button type="button" class="btn btn-link text-primary" @onclick="()=>changeAppDetailsVisibility(appRecord.AppId)">@(!recordDetailsVisibility[appRecord.AppId]? "🔽" : "🔼" )</button></td>
+                        </tr>
+                        <tr class="@(!recordDetailsVisibility[appRecord.AppId]? "d-none": string.Empty)">
+                            <td colspan="7">
+                                <table class="table table-sm ml-4">
+                                    <tbody>
+                                        @foreach (var apkRecord in appRecord.ApkRecords)
+                                        {
+                                            <tr>
+                                                <th class="col-sm-1 text-end">Version name</th>
+                                                <td class="col-sm-1">@apkRecord.VersionName</td>
+                                                <th class="col-sm-1 text-end">
+                                                    @if (@apkRecord.APK_SHA256 != null)
+                                                    {
+                                                        <span><abbr title="SHA256 hash of the APK file">File hash</abbr></span>
+                                                    }
+                                                </th>
+                                                <td class="col-sm-2">
+                                                    @if (@apkRecord.APK_SHA256 != null)
+                                                    {
+                                                        <input type="text" class="form-control form-control-sm mr-3" value=@apkRecord.APK_SHA256 readonly />
+                                                    }
+                                                </td>
+                                                <th class="col-sm-1 text-end">
+                                                    @if (apkAnalysisResults.TaskName == "task_text_search")
+                                                    {
+                                                        <span>Matching files</span>
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_code_scan")
+                                                    {
+                                                        <span>Inferred developers</span>
+                                                    }
+                                                    else if (new string[] { "task_tracker_domain_scan", "task_tracker_classname_scan" }.Contains(apkAnalysisResults.TaskName))
+                                                    {
+                                                        <span>Trackers</span>
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                                                    {
+                                                        <span>Permissions</span>
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                                                    {
+                                                        <span>FDQN</span>
+                                                    }
+                                                </th>
+                                                <td class="col-sm-1">
+                                                    @if (apkAnalysisResults.TaskName == "task_text_search")
+                                                    {
+                                                        @apkRecord.FileCount
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_code_scan")
+                                                    {
+                                                        @apkRecord.InferredDeveloperCount
+                                                    }
+                                                    else if ((new string[] { "task_tracker_domain_scan", "task_tracker_classname_scan" }.Contains(apkAnalysisResults.TaskName)) && apkRecord.Trackers != null)
+                                                    {
+                                                        @apkRecord.Trackers.Count()
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_permission_scan" && apkRecord.Permissions != null)
+                                                    {
+                                                        @apkRecord.Permissions.Count()
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_url_extraction" && apkRecord.Domains != null)
+                                                    {
+                                                        @apkRecord.Domains.Count()
+                                                    }
+                                                </td>
+                                                <th class="col-sm-1 text-end">
+                                                    @if (apkAnalysisResults.TaskName == "task_code_scan")
+                                                    {
+                                                        <span>Matching classes</span>
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_tracker_domain_scan")
+                                                    {
+                                                        <span>Domains detected</span>
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                                                    {
+                                                        <span>Dangerous</span>
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                                                    {
+                                                        <span>URL</span>
+                                                    }
+                                                </th>
+                                                <td class="col-sm-1">
+                                                    @if (apkAnalysisResults.TaskName == "task_code_scan" && apkRecord.Classes != null)
+                                                    {
+                                                        @apkRecord.Classes.Distinct().Count()
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_tracker_domain_scan" && apkRecord.Domains != null)
+                                                    {
+                                                        @apkRecord.Domains.Distinct().Count()
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_permission_scan" && apkRecord.Permissions != null)
+                                                    {
+                                                        @apkRecord.PermissionDangerousCount
+                                                    }
+                                                    else if (apkAnalysisResults.TaskName == "task_url_extraction" && apkRecord.Urls != null)
+                                                    {
+                                                        @apkRecord.Urls.Count()
+                                                    }
+                                                </td>
+                                                <td class="col-sm-1 text-right">
+                                                    <button type="button" class="btn btn-link text-primary" @onclick="()=>changeApkRecordDetailsVisibility(appRecord.AppId, apkRecord.APK_SHA256!)">
+                                                        @if (apkRecordDetailsVisibility[$"{appRecord.AppId}_{apkRecord.APK_SHA256}"])
+                                                        {
+                                                            <span class="oi oi-collapse-up"></span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="oi oi-collapse-down"></span>
+                                                        }
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            <tr class="@(!apkRecordDetailsVisibility[$"{appRecord.AppId}_{apkRecord.APK_SHA256}"]? "d-none": string.Empty)">
+                                                @if ((apkAnalysisResults.TaskName == "task_text_search") && (apkRecord.Paths != null))
+                                                {
+                                                    <td colspan="8" class="col small">
+                                                        <div class="mt-2 ml-4">
+                                                            <p>File paths: </p>
+                                                            <ul>
+                                                                @foreach (var filepath in apkRecord.Paths)
+                                                                {
+                                                                    <li>@filepath &nbsp;<a href="@(new Uri(settings.AppInspectAPIUrl!, $"app/{appRecord.AppId}/{apkRecord.APK_SHA256}/textcontent/{Common.EncodeBase64(filepath)}"))" class="link-secondary" target="_blank"><span class="oi oi-data-transfer-download"></span></a></li>
+                                                                }
+                                                            </ul>
+                                                        </div>
+                                                    </td>
+                                                }
+                                                else if (apkAnalysisResults.TaskName == "task_code_scan")
+                                                {
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.InferredDevelopers != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Inferred developers: </p>
+                                                                <ul>
+                                                                    @foreach (var developerName in apkRecord.InferredDevelopers)
+                                                                    {
+                                                                        <li>@developerName</li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.Classes != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Classes/packages: </p>
+                                                                <ul>
+                                                                    @foreach (var className in apkRecord.Classes.Distinct())
+                                                                    {
+                                                                        <li>@className &nbsp;<a href="@(new Uri(settings.AppInspectAPIUrl!, $"app/{appRecord.AppId}/{apkRecord.APK_SHA256}/textcontent/byclass/{Common.EncodeBase64(className)}"))" class="link-secondary" target="_blank"><span class="oi oi-data-transfer-download"></span></a></li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="4" class="col small align-top">
+                                                        @if (apkRecord.Classes != null && apkRecord.Lines != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Found in code lines: </p>
+                                                                <textarea rows=@apkRecord.Classes.Distinct().Count() class="form-control form-control-sm" readonly>@FormattingUtility.GetLinesByPathsString(apkRecord.Classes, apkRecord.Lines)</textarea>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                }
+                                                else if (apkAnalysisResults.TaskName == "task_tracker_domain_scan")
+                                                {
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.Trackers != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Trackers: </p>
+                                                                <ul>
+                                                                    @foreach (var trackerName in apkRecord.Trackers)
+                                                                    {
+                                                                        <li>@trackerName</li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.Domains != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Domains: </p>
+                                                                <ul>
+                                                                    @foreach (var domainName in apkRecord.Domains)
+                                                                    {
+                                                                        <li>@domainName</li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="4" class="col small align-top">
+                                                        @if (apkRecord.Classes != null && apkRecord.Lines != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Detected in code lines: </p>
+                                                                <textarea rows=@apkRecord.Classes.Distinct().Count() class="form-control form-control-sm" readonly>@FormattingUtility.GetLinesByPathsString(apkRecord.Classes, apkRecord.Lines)</textarea>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                }
+                                                else if (apkAnalysisResults.TaskName == "task_tracker_classname_scan")
+                                                {
+                                                    <td colspan="8" class="col small align-top">
+                                                        @if (apkRecord.Trackers != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Trackers: </p>
+                                                                <ul>
+                                                                    @foreach (var trackerName in apkRecord.Trackers)
+                                                                    {
+                                                                        <li>@trackerName</li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="4" class="col small align-top">
+                                                        @if (apkRecord.Classes != null)
+                                                        {
+                                                            <p>Classes/packages: </p>
+                                                            <div class="mt-2 ml-4">
+                                                                <textarea rows=@apkRecord.Classes.Distinct().Count() class="form-control form-control-sm" readonly>@string.Join(Environment.NewLine, apkRecord.Classes)</textarea>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                }
+                                                else if (apkAnalysisResults.TaskName == "task_permission_scan")
+                                                {
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.PermissionsDangerous != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Dangerous (@apkRecord.PermissionDangerousCount): </p>
+                                                                <ul>
+                                                                    @foreach (var permissionName in apkRecord.PermissionsDangerous)
+                                                                    {
+                                                                        <li><a href="https://developer.android.com/reference/android/Manifest.permission#@(permissionName.Split('.').Last())" class="link-secondary" target="_blank">@permissionName</a></li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.PermissionsSignature != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Signature (@apkRecord.PermissionSignatureCount): </p>
+                                                                <ul>
+                                                                    @foreach (var permissionName in apkRecord.PermissionsSignature)
+                                                                    {
+                                                                        <li><a href="https://developer.android.com/reference/android/Manifest.permission#@(permissionName.Split('.').Last())" class="link-secondary" target="_blank">@permissionName</a></li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.PermissionsNormal != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Normal (@apkRecord.PermissionNormalCount): </p>
+                                                                <ul>
+                                                                    @foreach (var permissionName in apkRecord.PermissionsNormal)
+                                                                    {
+                                                                        <li><a href="https://developer.android.com/reference/android/Manifest.permission#@(permissionName.Split('.').Last())" class="link-secondary" target="_blank">@permissionName</a></li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.PermissionsOther != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p>Other/unknown (@apkRecord.PermissionOtherCount): </p>
+                                                                <ul>
+                                                                    @foreach (var permissionName in apkRecord.PermissionsOther)
+                                                                    {
+                                                                        <li>@permissionName</li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                }
+                                                else if (apkAnalysisResults.TaskName == "task_url_extraction")
+                                                {
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.Domains != null)
+                                                        {
+                                                            <div class="mt-2 ml-4">
+                                                                <p><abbr title="Fully qualified domain names">FQDNs</abbr>: </p>
+                                                                <ul>
+                                                                    @foreach (var fqdn in apkRecord.Domains)
+                                                                    {
+                                                                        <li>@fqdn</li>
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="2" class="col small align-top">
+                                                        @if (apkRecord.Urls != null)
+                                                        {
+                                                            <div class="mt-2 ml-4 mr-4">
+                                                                <p>Urls: </p>
+                                                                <textarea rows=@apkRecord.Classes!.Distinct().Count() class="form-control form-control-sm" readonly>
+                                                                    @string.Join(Environment.NewLine, apkRecord.Urls)
+                                                                                                                                                    </textarea>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td colspan="4" class="col small align-top">
+                                                        @if (apkRecord.Classes != null && apkRecord.Lines != null)
+                                                        {
+                                                            <p>Found in code lines: </p>
+                                                            <div class="mt-2 ml-4">
+                                                                <textarea rows=@apkRecord.Classes.Distinct().Count() class="form-control form-control-sm" readonly>@FormattingUtility.GetLinesByPathsString(apkRecord.Classes, apkRecord.Lines)</textarea>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                }
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <Paginator PageCount=@apkAnalysisResultsPageCount @bind-PageIndex=apkAnalysisResultsPageIndex @bind-PaginatorStart=@apkAnalysisResultsPaginatorStart PageSize=@apkAnalysisResultsPageSize></Paginator>
+        }
+    }
+}
+
+
+
+@code {
+    private string? _taskId;
+
+    [Parameter]
+    public string? TaskId
+    {
+        get => _taskId;
+        set
+        {
+            string? oldTaskId = _taskId;
+            _taskId = value;
+            if (_taskId != oldTaskId)
+            {
+                Task.Run(async () => await Refresh());
+            }
+        }
+    }
+
+    [Parameter]
+    public bool ShowArguments { get; set; }
+
+
+    private Dictionary<string, bool> apkRecordDetailsVisibility { get; set; } = new Dictionary<string, bool>();
+    private Dictionary<string, bool> recordDetailsVisibility { get; set; } = new Dictionary<string, bool>();
+
+    private GrouppedApkAnalysisRecord[]? grouppedApkAnalysisRecordPagingWindow {
+        get
+        {
+             return (_apkAnalysisResults == null) ? null : _apkAnalysisResults.Records.Skip(apkAnalysisResultsPageIndex * apkAnalysisResultsPageSize).Take(apkAnalysisResultsPageSize).ToArray();
+        }
+    }
+
+    private ApkAnalysisResults? _apkAnalysisResults;
+    private ApkAnalysisResults? apkAnalysisResults
+    {
+        get => _apkAnalysisResults;
+        set
+        {
+            apkRecordDetailsVisibility.Clear();
+            recordDetailsVisibility.Clear();
+
+            if (value != null)
+            {
+                foreach (var appRecord in value.Records)
+                {
+                    recordDetailsVisibility.Add(appRecord.AppId, false);
+                    bool firstRow = true;
+                    foreach (var apkRecord in appRecord.ApkRecords)
+                    {
+                        string key = $"{appRecord.AppId}_{apkRecord.APK_SHA256}";
+                        if (firstRow)
+                        {
+                            apkRecordDetailsVisibility.Add(key, true);
+                            firstRow = false;
+                        }
+                        else
+                            apkRecordDetailsVisibility.Add(key, false);
+                    }
+                }
+
+                int recordCount = value.Records.Count();
+                int remainder = recordCount % apkAnalysisResultsPageSize;
+                apkAnalysisResultsPageCount = ((recordCount - remainder) / apkAnalysisResultsPageSize) + ((remainder>0)?1:0);
+                apkAnalysisResultsPageIndex = 0;
+                apkAnalysisResultsPaginatorStart = 0;
+            }
+
+            _apkAnalysisResults = value;
+        }
+    }
+
+    private int apkAnalysisResultsPageSize { get; set; } = 10;
+    private int apkAnalysisResultsPageCount { get; set; } = 0;
+    private int apkAnalysisResultsPageIndex { get; set; } = 0;
+    private int apkAnalysisResultsPaginatorStart { get; set; } = 0;
+
+    void changeApkRecordDetailsVisibility(string appId, string apkHash)
+    {
+        string key = $"{appId}_{apkHash}";
+        apkRecordDetailsVisibility[key] = !apkRecordDetailsVisibility[key];
+    }
+
+    private void changeAppDetailsVisibility(string appId)
+    {
+        recordDetailsVisibility[appId] = !recordDetailsVisibility[appId];
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (TaskId != null)
+            await Refresh();
+    }
+
+    public async Task Refresh()
+    {
+        if (TaskId != null)
+        {
+            apkAnalysisResults = await httpClient.GetFromJsonAsync<ApkAnalysisResults?>($"analysis/{TaskId}");
+
+            StateHasChanged();
+        }
+    }
+}

@@ -1,0 +1,76 @@
+﻿    @if (PageCount > 1)
+{
+    <nav aria-label="Page navigation example">
+        <ul class="pagination justify-content-center">
+            <li class="page-item @((PaginatorStart <= 0)?"disabled":string.Empty)">
+                <button type="button" class="page-link" onclick=@(() => ShiftPaginatorPages(false))>
+                    <span aria-hidden="true">&laquo;</span>
+                </button>
+            </li>
+            @for (int i = PaginatorStart; i < (((PaginatorStart + VisiblePageCount) > PageCount) ? PageCount : PaginatorStart + VisiblePageCount); i++)
+            {
+                var thisPageIndex = i;
+                <li class="page-item @((PageIndex == thisPageIndex)?"active":string.Empty)"><button type="button" class="page-link" onclick=@(() => TurnToPage(thisPageIndex))>@(i + 1)</button></li>
+            }
+            <li class="page-item @((PaginatorStart + VisiblePageCount >= PageCount)?"disabled":string.Empty)">
+                <button type="button" class="page-link" onclick=@(() => ShiftPaginatorPages(true))>
+                    <span aria-hidden="true">&raquo;</span>
+                </button>
+            </li>
+        </ul>
+    </nav>
+}
+
+@code {
+
+    [Parameter]
+    public int PageSize { get; set; } = 10;
+
+    [Parameter]
+    public int PageCount { get; set; } = 0;
+
+    [Parameter]
+    public int PageIndex { get; set; } = 0;
+
+    [Parameter]
+    public int PaginatorStart { get; set; } = 0;
+
+    [Parameter]
+    public int VisiblePageCount { get; set; } = 10;
+
+    [Parameter]
+    public EventCallback<int> PageIndexChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<int> PaginatorStartChanged { get; set; }
+
+    //[Parameter]
+    //public EventCallback PageChanged { get; set; }
+
+    private void TurnToPage(int page)
+    {
+        if ((page >= 0) && (page < PageCount))
+        {
+            PageIndex = page;
+            StateHasChanged();
+            PageIndexChanged.InvokeAsync(page);
+            //await PageChanged.InvokeAsync();
+        }
+    }
+
+    public void ShiftPaginatorPages(bool shiftRight)
+    {
+        if (shiftRight)
+        {
+            if ((PaginatorStart + VisiblePageCount) <= PageCount)
+                PaginatorStart += VisiblePageCount;
+        }
+        else
+        {
+            if ((PaginatorStart - VisiblePageCount) >= 0)
+                PaginatorStart -= VisiblePageCount;
+        }
+
+        PaginatorStartChanged.InvokeAsync(PaginatorStart);
+    }
+}

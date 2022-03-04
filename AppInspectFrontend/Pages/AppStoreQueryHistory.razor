@@ -1,0 +1,166 @@
+﻿@page "/history/apkstorequery"
+@using AppInspectDataModels
+@using System.Text.Json
+@inject HttpClient Http
+
+
+<PageTitle>AppInspect - Store Query History</PageTitle>
+
+<h1>Store Query History</h1>
+
+<form>
+    <fieldset>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-1 fw-bold">Text</label>
+            <div class="col-sm-9">
+                <input class="form-control" type="text" @bind="queryField" placeholder="put any part of text in the query submitted or the results" />
+            </div>
+            <div class="col-sm-2">
+                <button type="button" class="btn btn-primary mb-3" @onclick="search">Search</button>
+            </div>
+        </div>
+    </fieldset>
+</form>
+
+<Alert @bind-Message="alertMessage"></Alert>
+
+@if (tasksPagingWindow == null)
+{
+    <p>Loading, please wait ...</p>
+}
+else
+{
+    @if (tasksPagingWindow.Any())
+    {
+        <table class="table mt-3">
+
+            <thead>
+                <tr>
+                    <th>Created</th>
+                    <th>Query</th>
+                    <th>Status</th>
+                    <th>&nbsp;</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                @foreach (AppInspectTask task in tasksPagingWindow)
+                {
+                    <tr>
+                        <td>@task.Created</td>
+                        <td>
+                            <textarea readonly class="col-11" rows="4">
+                                @prettifyArguments(task.Arguments)
+                                                                                        </textarea>
+                        </td>
+
+                        <td>
+                            @if (!task.Started.HasValue)
+                            {
+                                <span>Pending</span>
+                            }
+                            else if ((!task.Completed.HasValue) && (task.Started.HasValue))
+                            {
+                                <span>Started</span>
+                            }
+                            else if (task.Completed.HasValue && task.Started.HasValue)
+                            {
+                                @if (task.Error != null)
+                                {
+                                    <span class="text-danger">Error</span>
+                                }
+                                else
+                                {
+                                    <span class="text-success">Completed</span>
+                                }
+                            }
+                        </td>
+                        <td>
+                            <a href="history/appstorequery/@(task.Id)" class="link-primary"><span class="oi oi-eye"></span> Open</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <Paginator PageCount=@taskPageCount @bind-PageIndex=taskPageIndex @bind-PaginatorStart=@taskPaginatorStart PageSize=@taskPageSize></Paginator>
+    }
+    else if (!string.IsNullOrEmpty(queryField))
+    {
+        <div class="mt-4 text-center">Sorry, no matching queries are found.</div>
+    }
+
+
+    @if (queryField == null)
+    {
+        <div class="mt-4 text-center"><small>Only the queries completed in the last seven days are shown here.</small></div>
+    }
+
+}
+
+
+@code {
+    private AppInspectTask[]? _tasks;
+
+    private AppInspectTask[]? tasksPagingWindow
+    {
+        get { return (_tasks == null) ? null : _tasks.Skip(taskPageIndex * taskPageSize).Take(taskPageSize).ToArray(); }
+        set
+        {
+            _tasks = value;
+            if (value != null)
+            {
+                int recordCount = value.Count();
+                int remainder = recordCount % taskPageSize;
+                taskPageCount = ((recordCount - remainder) / taskPageSize) + ((remainder>0)?1:0);
+                taskPageIndex = 0;
+                taskPaginatorStart = 0;
+            }
+        }
+    }
+
+
+    public string? queryField { get; set; }
+
+    private string? alertMessage { get; set; }
+
+    private int taskPageSize { get; set; } = 10;
+    private int taskPageCount { get; set; } = 0;
+    private int taskPageIndex { get; set; } = 0;
+    private int taskPaginatorStart { get; set; } = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await search();
+    }
+
+    private async Task search()
+    {
+
+        if (queryField == null)
+        {
+            tasksPagingWindow = null;
+            tasksPagingWindow = await Http.GetFromJsonAsync<AppInspectTask[]>("store");
+        }
+        else
+        {
+            if (queryField.Length < 5)
+            {
+                alertMessage = "Please provide a search term with at least five characters.";
+                return;
+            }
+
+            tasksPagingWindow = null;
+            tasksPagingWindow = await Http.GetFromJsonAsync<AppInspectTask[]>($"store/search/{Common.EncodeBase64(queryField)}");
+        }
+    }
+
+    private string? prettifyArguments(string argumentsInJson)
+    {
+        var taskArguments = JsonSerializer.Deserialize<AppStoreQueryTaskArguments>(argumentsInJson);
+
+        return Common.GetPrettifiedAppStoreQueryTaskArguments(taskArguments);
+    }
+
+}

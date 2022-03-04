@@ -1,0 +1,10 @@
+﻿@page "/history/apkanalysis/{taskId}"
+
+<PageTitle>AppInspect - APK Analysis</PageTitle>
+
+<APKAnalysisResult TaskId=@TaskId ShowArguments=@true></APKAnalysisResult>
+
+@code {
+    [Parameter]
+    public string? TaskId { get; set; }
+}

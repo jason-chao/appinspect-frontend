@@ -1,0 +1,158 @@
+﻿@page "/apparchive"
+@using AppInspectDataModels
+@inject HttpClient Http
+
+<PageTitle>AppInspect - APK Archive</PageTitle>
+
+<h1>APK Archive</h1>
+
+<form>
+    <fieldset>
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">App IDs</label>
+            <div class="col-sm-10">
+                <textarea class="form-control" placeholder="put one app id or Google Play link per line" @bind="appIdsField"></textarea>
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="row mt-3">
+        <label class="form-label col-sm-2 fw-bold">App title</label>
+        <div class="col-sm-10">
+            <input class="form-control" type="text" @bind="titleField" placeholder="put any part of app title" />
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <button type="button" class="btn btn-primary mb-3" @onclick="search">Search</button>
+    </div>
+
+</form>
+
+<Alert @bind-Message="alertMessage"></Alert>
+
+@if (appArchiveResultsPagingWindow != null)
+{
+
+    @if (appArchiveResultsPagingWindow.Any())
+    {
+        <table class="table table-light mt-3">
+            <thead>
+                <tr>
+                    <th class="col-sm-3">App Id</th>
+                    <th class="col-sm-3">Title</th>
+                    <th class="col-sm-1"><abbr title="Number of versions of APKs available in the archive">APKs</abbr></th>
+                    <th class="col-sm-2"><abbr title="The latest version of APK available in the archive">Latest version</abbr></th>
+                    <th class="col-sm-1"><abbr title="Number of versions of app details obtained from Google Play">Details</abbr></th>
+                    <th class="col-sm-2">&nbsp;</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var appResult in appArchiveResultsPagingWindow)
+                {
+                    <tr>
+                        <td>
+                            @if (appResult.AppId.Length <= 48)
+                            {
+                                @appResult.AppId
+                            }
+                            else
+                            {
+                                <input type="text" class="form-control" value=@appResult.AppId readonly />
+                            }
+                        </td>
+                        <td>@appResult.Title</td>
+                        <td>@appResult.ApkFileCount</td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(appResult.LatestVersionName))
+                            {
+                                @appResult.LatestVersionName
+                            }
+                        </td>
+                        <td>@appResult.StoreQueryCount</td>
+                        <td>
+                            <a href="app/@(Common.EncodeBase64(appResult.AppId))" class="link-primary" target="_blank"><span class="oi oi-eye"></span> Open</a>
+                            @if (appResult.ApkFileCount > 0)
+                            {
+                                <a href="apkanalysis/@(Common.EncodeBase64(appResult.AppId))" class="link-primary ms-3" target="_blank"><span class="oi oi-beaker"></span> Analyse APKs</a>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <Paginator PageCount=@appArchiveResultsPageCount @bind-PageIndex=appArchiveResultsPageIndex @bind-PaginatorStart=@appArchiveResultsPaginatorStart PageSize=@appArchiveResultsPageSize></Paginator>
+    }
+    else
+    {
+        <div>Sorry, no results.</div>
+    }
+}
+
+
+
+@code {
+
+    private string[] appIds = new string[] { };
+
+    private string appIdsField { get => string.Join(Environment.NewLine, appIds); set { appIds = Common.GetAppIdsFromUrlMultilineText(value).ToArray(); } }
+
+    private string? titleField { get; set; }
+
+    private string? alertMessage { get; set; }
+
+    private List<AppArchiveSearchResult>? appArchiveResults { get; set; }
+
+    private List<AppArchiveSearchResult>? appArchiveResultsPagingWindow {
+        get { return (appArchiveResults == null) ? null : appArchiveResults.Skip(appArchiveResultsPageIndex * appArchiveResultsPageSize).Take(appArchiveResultsPageSize).ToList(); }
+        set
+        {
+            appArchiveResults = value;
+            if (value != null)
+            {
+                int recordCount = value.Count();
+                int remainder = recordCount % appArchiveResultsPageSize;
+                appArchiveResultsPageCount = ((recordCount - remainder) / appArchiveResultsPageSize) + 1;
+                appArchiveResultsPageIndex = 0;
+                appArchiveResultsPaginatorStart = 0;
+            }
+        } }
+
+    private int appArchiveResultsPageSize { get; set; } = 10;
+    private int appArchiveResultsPageCount { get; set; } = 0;
+    private int appArchiveResultsPageIndex { get; set; } = 0;
+    private int appArchiveResultsPaginatorStart { get; set; } = 0;
+
+    private async Task search()
+    {
+        var archiveSearch = new AppArchiveSearch();
+
+        alertMessage = null;
+
+        if (appIds.Count() > 0)
+        {
+            if (appIds.Any(a => a.Length < 5))
+            {
+                alertMessage = "Pleae make sure that each app id is made of up at least five characters";
+                return;
+            }
+
+            archiveSearch.AppIds = new List<string>(appIds);
+        }
+
+        if (!string.IsNullOrEmpty(titleField))
+        {
+            if (titleField.Length < 3)
+            {
+                alertMessage = "Please provide a search term with three characters or more";
+                return;
+            }
+
+            archiveSearch.Title = titleField;
+        }
+
+        var httpResponse = await Http.PostAsJsonAsync<AppArchiveSearch>("app/archive", archiveSearch);
+        appArchiveResultsPagingWindow = await httpResponse.Content.ReadFromJsonAsync<List<AppArchiveSearchResult>>();
+    }
+
+}

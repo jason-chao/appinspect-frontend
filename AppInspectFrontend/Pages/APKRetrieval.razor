@@ -1,0 +1,202 @@
+﻿@page "/apkretrieval"
+@page "/apkretrieval/{PrefilledAppIdBase64}"
+@inject HttpClient Http
+@using System.Net.Http.Headers
+@using AppInspectDataModels
+
+<PageTitle>AppInspect - APK Retrieval</PageTitle>
+
+<h1>APK Retrieval</h1>
+
+<div class="row mt-3">
+    <label class="form-label col-sm-4 text-bold fw-bold">Upload from your computer</label>
+    <div class="col-sm-8">
+        <InputFile OnChange="@loadFiles" @ref="fileUploader" multiple accept=".apk" disabled=@disableInputControls />
+        <small class="text-muted">You may upload no more than 10 APK files at a time.  Each file may not exceed 200 MB.</small>
+    </div>
+</div>
+
+<div class="row mt-3 text-center">
+    <p class="fs-5">or</p>
+</div>
+
+<div class="row">
+    <label class="form-label col-sm-4 fw-bold">Download from Google Play</label>
+    <div class="col-sm-8">
+        <textarea class="form-control" placeholder="put one app id or Google Play link per line" @bind="appIdsField" disabled=@disableInputControls></textarea>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <button type="button" class="btn btn-primary mb-3" @onclick="retrieveApks" disabled=@disableInputControls>Go</button>
+</div>
+
+<Alert @bind-Message="alertMessage"></Alert>
+
+@if (isSending)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-warning" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Uploading ...</span>
+        </div>
+    </div>
+}
+
+@if (uploadedFileList != null)
+{
+    <div>
+        <p>The following APKs files are uploaded to AppInspect successfully.  Their conversion to <abbr title="a file format used by AppInspect to enable high-performance analysis">Parquet format</abbr> is in progress.  They will become available in the archive if the conversion is successful.</p>
+        <ul>
+            @foreach (var originalFileName in uploadedFileList.Keys)
+            {
+                <li>@originalFileName</li>
+            }
+        </ul>
+    </div>
+}
+
+@if (rejectedFileList.Count > 0)
+{
+    <div class="text-danger">
+        <p>The following APKs files are NOT uploaded because they exceed the size limit.</p>
+        <ul>
+            @foreach (var originalFileName in rejectedFileList)
+            {
+                <li>@originalFileName</li>
+            }
+        </ul>
+    </div>
+}
+
+
+@if (insertedAppIdList != null)
+{
+    @if (insertedAppIdList.Any())
+    {
+        <div>
+            <p>AppInspect will try to retrieve the following APKs from Google Play.  If the retrival and conversion are successful, they will become available in the archive.</p>
+            <ul>
+                @foreach (var appId in insertedAppIdList)
+                {
+                    <li>@appId</li>
+                }
+            </ul>
+        </div>
+    }
+}
+
+
+
+@code {
+
+    [Parameter]
+    public string? PrefilledAppIdBase64 { get; set; }
+
+    private List<string> rejectedFileList { get; set; } = new();
+    private Dictionary<string, string>? uploadedFileList { get; set; }
+    private List<string>? insertedAppIdList { get; set; }
+
+    private InputFile? fileUploader { get; set; }
+    private MultipartFormDataContent? fileUploadContent { get; set; }
+    private bool isSending { get; set; }
+    private bool isSent { get; set; }
+    private bool disableInputControls { get { return (isSending || isSent); } }
+
+    private string? alertMessage { get; set; }
+
+    private string[] appIds = new string[] { };
+    private string appIdsField
+    {
+        get => string.Join(Environment.NewLine, appIds);
+        set
+        {
+            appIds = Common.GetAppIdsFromUrlMultilineText(value).ToArray();
+        }
+    }
+
+    private bool disableGooglePlayDownloadControls { get; set; }
+
+    protected override void OnInitialized()
+    {
+        if (PrefilledAppIdBase64 != null)
+        {
+            var value = Common.DecodeBase64(PrefilledAppIdBase64);
+
+            if (!string.IsNullOrEmpty(value))
+                appIdsField = value;
+        }
+    }
+
+    private async Task retrieveApks()
+    {
+        if ((fileUploadContent == null) && (appIds.Count() <= 0))
+        {
+            alertMessage = "Please select APK files or provide app ids.";
+            return;
+        }
+
+        if (appIds.Count() > 100)
+        {
+            alertMessage = "Please provide no more than 100 app ids at a time.";
+            return;
+        }
+
+        isSending = true;
+
+        if (fileUploadContent != null)
+        {
+            var response = await Http.PostAsync("app/apkupload", fileUploadContent);
+            uploadedFileList = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        }
+
+        if (appIds.Count() > 0)
+        {
+            var response = await Http.PostAsJsonAsync<string[]>("app/apkretrival", appIds);
+            insertedAppIdList = await response.Content.ReadFromJsonAsync<List<string>>();
+        }
+
+        isSending = false;
+        isSent = true;
+    }
+
+    private void loadFiles(InputFileChangeEventArgs e)
+    {
+        rejectedFileList.Clear();
+
+        long maxSingleFileSize = 1024 * 1024 * 300; 
+        int uploadLimit = 10;
+        int filesAdded = 0;
+
+        fileUploadContent = new MultipartFormDataContent();
+
+
+        foreach (var file in e.GetMultipleFiles())
+        {
+            try
+            {
+                if (filesAdded >= uploadLimit)
+                {
+                    rejectedFileList.Add(file.Name);
+                    continue;
+                }
+
+                if (file.Size <= maxSingleFileSize)
+                {
+                    var fileContent = new StreamContent(file.OpenReadStream(maxSingleFileSize));
+                    fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/vnd.android.package-archive");
+                    fileUploadContent.Add(content: fileContent, name: "\"files\"", fileName: file.Name);
+                    filesAdded++;
+                }
+                else
+                {
+                    rejectedFileList.Add(file.Name);
+                    continue;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"File: {file.Name} Error: {ex.Message}");
+            }
+        }
+    }
+}

@@ -1,0 +1,10 @@
+﻿@page "/history/appstorequery/{TaskId}"
+
+<PageTitle>AppInspect - App Store Query</PageTitle>
+
+<AppStoreQueryResult TaskId=@TaskId ShowArguments=@true></AppStoreQueryResult>
+
+@code {
+    [Parameter]
+    public string? TaskId { get; set; }
+}

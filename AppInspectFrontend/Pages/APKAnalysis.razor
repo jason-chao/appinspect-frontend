@@ -1,0 +1,517 @@
+﻿@page "/apkanalysis"
+@page "/apkanalysis/{PrefilledAppIdBase64}"
+@using AppInspectDataModels
+@inject FrontendSettings settings
+@inject HttpClient Http
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
+@using System.Text.Json.Nodes
+
+<PageTitle>AppInspect - APK Analysis</PageTitle>
+
+<h1>APK Analysis</h1>
+
+@if (!isRPCConnected)
+{
+    <div class="mt-3">
+        <Alert Message="Connecting to the service ..." AlertType="Info" Dismissable=@false></Alert>
+    </div>
+}
+
+<form>
+    <fieldset disabled=@isInputDisabled>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">App IDs</label>
+            <div class="col-sm-10">
+                <textarea class="form-control" placeholder="put one app id or Google Play link per line" @bind="appIdsField" readonly="@analyseMostRecentAppsInArchive"></textarea>
+            </div>
+        </div>
+
+        <div class="row mt-1">
+            <div class="col-sm-2">&nbsp;</div>
+            <div class="col-sm-10">
+                <input class="form-check-input" type="checkbox" id="allApksCheckbox" @bind="analyseMostRecentAppsInArchive">
+                <label class="form-check-label" for="allApksCheckbox">
+                    quick start: analyse @autoMostRecentNumber recenlty retrieved apks
+                </label>
+            </div>
+        </div>
+
+
+        @if (inArchiveResults != null)
+        {
+            if (inArchiveResults.AppIdsNotInArchive.Count() > 0)
+            {
+                <div class="row mt-1">
+                    <div class="col-sm-2">&nbsp;</div>
+                    <div class="col-sm-10 small text-danger">
+                        The analysis will be run without the following app ids because they are not found in the archive.  If you wish to include them, please retreive or upload their APKs.
+                        <ul>
+                            @foreach (var idNotFound in inArchiveResults.AppIdsNotInArchive)
+                            {
+                                <li>@idNotFound</li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+            }
+        }
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold"><abbr title="Examples of analysis">Analysis templates</abbr></label>
+            <div class="col-sm-10">
+                <div class="ml-3 mr-3 row row-cols-auto bg-warning bg-opacity-10">
+                    <div class="col">
+                        <button type="button" class="btn btn-link text-primary" @onclick="() => applyAnalysisTemplate(AnalysisTemplate.Permission)"><abbr title="The detection of permissions that an app may use.">Permissions</abbr></button>
+                        <button type="button" class="btn btn-link text-primary" @onclick="() => applyAnalysisTemplate(AnalysisTemplate.TrackerByClass)"><abbr title="The detection of tracker-related class libraries/packages.">Trackers by packages</abbr></button>
+                        <button type="button" class="btn btn-link text-primary" @onclick="() => applyAnalysisTemplate(AnalysisTemplate.TrackerByDomain)"><abbr title="The detection of tracker-related domain names which may be hardcoded.">Trackers by domains</abbr></button>
+                        <button type="button" class="btn btn-link text-primary" @onclick="() => applyAnalysisTemplate(AnalysisTemplate.SensorData)"><abbr title="The detection of the function that an app has to invoked in order to retrieve the device's sensor data.">Sensor data retrieval</abbr></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <label class="form-label col-sm-2 fw-bold">Analysis</label>
+            <div class="col-sm-5">
+                <select class="form-select" @bind="analysisTaskField">
+                    <option selected>select an analytical method</option>
+                    <option value="permission_scan">Permission scan</option>
+                    <option value="tracker_domain_scan">Tracker-domain scan</option>
+                    <option value="tracker_classname_scan">Tracker-package scan</option>
+                    <option value="text_search">Text search</option>
+                    <option value="code_scan">Code scan</option>
+                    <option value="url_extraction">Url extraction</option>
+                </select>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(analysisTaskField))
+        {
+            @if ((new string[] { "text_search", "code_scan" }).Contains(analysisTaskField))
+            {
+                <div class="row mt-3">
+                    <label class="form-label col-sm-2 text-bold fw-bold">Search term</label>
+                    <div class="col-sm-10">
+                        <input class="form-control" type="text" @bind="searchTermField" placeholder="separate multiple words with spaces" />
+                    </div>
+                </div>
+            }
+            else if (analysisTaskField == "tracker_domain_scan")
+            {
+                <div class="row mt-3">
+                    <label class="form-label col-sm-2 fw-bold">Tracker list</label>
+                    <div class="col-sm-5">
+                        <select class="form-select" @bind="domainTrakcerListNameField">
+                            <option value="xray" selected>xray</option>
+                            <option value="Disconnect">Disconnect</option>
+                            <option value="exodus">exodus</option>
+                        </select>
+                    </div>
+                </div>
+            }
+            else if (analysisTaskField == "tracker_classname_scan")
+            {
+                <div class="row mt-3">
+                    <label class="form-label col-sm-2 fw-bold">Tracker list</label>
+                    <div class="col-sm-5">
+                        <select class="form-select" @bind="classnameTrakcerListNameField">
+                            <option value="exodus">exodus</option>
+                        </select>
+                    </div>
+                </div>
+            }
+
+            <div class="row mt-3">
+                <label class="col-sm-2">&nbsp;</label>
+                <div class="col-sm-10 text-end">
+                    <button type="button" class="btn btn-link text-primary" @onclick="changeAdvancedFieldsVisibility">advanced query fields @(!showAdvancedFields? "🔽" : "🔼" )</button>
+                </div>
+            </div>
+
+            <!-- advanced settings -->
+            <div class="collapse @(showAdvancedFields? "show" : string.Empty)">
+
+                @if (analysisTaskField == "text_search")
+                {
+                    <div class="row mt-3">
+                        <label class="form-label col-sm-2">File extensions</label>
+                        <div class="col-sm-10">
+                            <input class="form-control" type="text" @bind="fileExtensionsField" placeholder="separate extensions with spaces" />
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <label class="form-label col-sm-2">Filename</label>
+                        <div class="col-sm-10">
+                            <input class="form-control" type="text" @bind="filenameField" placeholder="put any part of the file path/name" />
+                        </div>
+                    </div>
+                }
+
+                @if (analysisTaskField == "code_scan")
+                {
+                    <div class="row mt-3">
+                        <label class="form-label col-sm-2">Package name</label>
+                        <div class="col-sm-10">
+                            <input class="form-control" type="text" @bind="packageNameField" placeholder="put any part of the full package name" />
+                        </div>
+                    </div>
+                }
+
+                @if ((new string[] { "text_search", "code_scan" }).Contains(analysisTaskField))
+                {
+                    <div class="row mt-3">
+                        <label class="form-label col-sm-2">Case sensitive</label>
+                        <div class="col-sm-10">
+                            <input class="form-check-input" type="checkbox" id="caseSensitiveCheckbox" @bind="isCaseSensitiveField">
+                            <label class="form-check-label" for="caseSensitiveCheckbox">
+                                Yes
+                            </label>
+                        </div>
+                    </div>
+                }
+
+                <div class="row mt-3">
+                    <label class="form-label col-sm-2"><abbr title="The maximum number of records (in apks) to be loaded.">Limit</abbr></label>
+                    <div class="col-sm-10">
+                        <input class="form-control" type="number" @bind="recordLimitField" min="1">
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mt-4">
+                <button type="button" class="btn btn-primary mb-3" @onclick="runAnalysis">Run</button>
+            </div>
+        }
+
+    </fieldset>
+</form>
+
+<Alert @bind-Message="alertMessage"></Alert>
+
+<div class="mt-5">
+    <APKAnalysisResult TaskId=@lastTaskId @ref="apkAnalysisResult"></APKAnalysisResult>
+</div>
+
+@code {
+
+    [Parameter]
+    public string? PrefilledAppIdBase64 { get; set; }
+
+    private HubConnection? hubConnection;
+
+    private bool isAnalysisRunning { get; set; }
+    private bool isRPCConnected { get { return hubConnection?.State == HubConnectionState.Connected; } }
+    private bool isInputDisabled { get { return isAnalysisRunning || (!isRPCConnected); } }
+
+    private readonly string[] validAnalysisMethods = new string[] { "text_search", "code_scan", "tracker_domain_scan", "tracker_classname_scan", "permission_scan", "url_extraction" };
+
+    private bool _analyseMostRecentAppsInArchive = false;
+    private string[] appIds = new string[] { };
+
+    private string appIdsField
+    {
+        get => string.Join(Environment.NewLine, appIds);
+        set { appIds = Common.GetAppIdsFromUrlMultilineText(value).ToArray(); Task.Run(async () => await performAppIdsInArchiveCheck()); }
+    }
+    private bool analyseMostRecentAppsInArchive { get => _analyseMostRecentAppsInArchive; set { _analyseMostRecentAppsInArchive = value; if (value) Task.Run(async () => await loadTheMostRecentlyDownloadedAppIds()); else appIdsField = string.Empty; } }
+
+    private string? analysisTaskField { get; set; }
+    private bool isCaseSensitiveField { get; set; }
+
+    private string searchTermField { get; set; } = string.Empty;
+    private string fileExtensionsField { get; set; } = string.Empty;
+    private string packageNameField { get; set; } = string.Empty;
+    private string filenameField { get; set; } = string.Empty;
+    private string domainTrakcerListNameField { get; set; } = "xray";
+    private string classnameTrakcerListNameField { get; set; } = "exodus";
+    private int recordLimitField { get; set; } = 500;
+    private int autoMostRecentNumber { get; set; } = 100;
+
+    private string? alertMessage { get; set; }
+    private InArchiveCheckResults? inArchiveResults = null;
+
+
+    private bool showAdvancedFields { get; set; } = false;
+
+    private APKAnalysisResult? apkAnalysisResult;
+
+    private string? lastTaskId { get; set; } = null;
+
+    public enum AnalysisTemplate { SensorData, Permission, TrackerByDomain, TrackerByClass }
+
+    protected override async Task OnInitializedAsync()
+    {
+
+        if (PrefilledAppIdBase64 != null)
+        {
+            var value = Common.DecodeBase64(PrefilledAppIdBase64);
+
+            if (!string.IsNullOrEmpty(value))
+                appIdsField = value;
+        }
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(settings.AppInspectRPCUrl!.ToString())
+            .Build();
+
+        hubConnection.On<string>("TaskCreated", (taskId) =>
+        {
+            lastTaskId = taskId;
+            isAnalysisRunning = true;
+            StateHasChanged();
+        });
+
+        hubConnection.On<string>("TaskStatusChanged", async (taskId) =>
+        {
+            if (lastTaskId == taskId)
+            {
+                isAnalysisRunning = false;
+                await apkAnalysisResult!.Refresh();
+                StateHasChanged();
+            }
+        });
+
+        await hubConnection.StartAsync();
+
+    }
+
+    private void showErrorMessage(string message)
+    {
+        alertMessage = message;
+    }
+
+    private void clearErrorMessage()
+    {
+        alertMessage = null;
+    }
+
+    private void changeAdvancedFieldsVisibility()
+    {
+        showAdvancedFields = !showAdvancedFields;
+    }
+
+    private void applyAnalysisTemplate(AnalysisTemplate template)
+    {
+        switch (template)
+        {
+            case AnalysisTemplate.SensorData:
+                {
+                    analysisTaskField = "code_scan";
+                    searchTermField = "Landroid/hardware/SensorEventListener;";
+                }
+                break;
+            case AnalysisTemplate.Permission:
+                {
+                    analysisTaskField = "permission_scan";
+                }
+                break;
+            case AnalysisTemplate.TrackerByDomain:
+                {
+                    analysisTaskField = "tracker_domain_scan";
+                    domainTrakcerListNameField = "xray";
+                }
+                break;
+            case AnalysisTemplate.TrackerByClass:
+                {
+                    analysisTaskField = "tracker_classname_scan";
+                    classnameTrakcerListNameField = "exodus";
+                }
+                break;
+        }
+    }
+
+    private bool validateFields()
+    {
+        clearErrorMessage();
+
+        if (!validAnalysisMethods.Contains(analysisTaskField))
+        {
+            showErrorMessage("Please select an analysis method.");
+            return false;
+        }
+
+        //if (!_analyseMostRecentAppsInArchive)
+        //{
+        bool noValidIds = true;
+
+        if (inArchiveResults != null)
+        {
+            if (inArchiveResults.ParquetFilenames.Count() > 0)
+                noValidIds = false;
+        }
+
+        if (noValidIds)
+        {
+            showErrorMessage("Please provide at least one App Id available in the archive.");
+            return false;
+        }
+        //}
+
+        if ((new string[] { "text_search", "code_scan" }).Contains(analysisTaskField))
+        {
+            var searchTermSegments = searchTermField.Split(" ", StringSplitOptions.RemoveEmptyEntries);
+
+            if (searchTermSegments.Count() <= 0)
+            {
+                showErrorMessage("Please provide a search term.");
+                return false;
+            }
+        }
+        else if (analysisTaskField == "tracker_domain_scan")
+        {
+            if (!(new string[] { "xray", "Disconnect", "exodus" }).Contains(domainTrakcerListNameField))
+            {
+                showErrorMessage("Please select a valid tracker list.");
+                return false;
+            }
+        }
+        else if (analysisTaskField == "tracker_classname_scan")
+        {
+            if (!(new string[] { "exodus" }).Contains(classnameTrakcerListNameField))
+            {
+                showErrorMessage("Please select a valid tracker list.");
+                return false;
+            }
+        }
+
+
+        if (hubConnection == null)
+        {
+            showErrorMessage("The connection is being established.  Please try again later.");
+            return false;
+        }
+
+        if (hubConnection.State != HubConnectionState.Connected)
+        {
+            showErrorMessage("There may be an issue with the connection.  Please try again later.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task runAnalysis()
+    {
+        if (!validateFields())
+            return;
+
+        string queryString = string.Empty;
+
+        if (analysisTaskField == "text_search")
+        {
+            var analysisArguments = new
+            {
+                app_parquet_basenames = inArchiveResults!.ParquetFilenames,
+                search_terms = new List<string>(searchTermField.Split(" ", StringSplitOptions.RemoveEmptyEntries)),
+                extensions = new List<string>(fileExtensionsField.Split(" ", StringSplitOptions.RemoveEmptyEntries)),
+                filename = filenameField.Trim(),
+                case_sensitive = isCaseSensitiveField,
+                limit = recordLimitField
+            };
+            var query = new { task_name = "task_text_search", task_arguments = analysisArguments };
+
+            queryString = JsonSerializer.Serialize(query);
+        }
+        else if (analysisTaskField == "code_scan")
+        {
+            var analysisArguments = new
+            {
+                app_parquet_basenames = inArchiveResults!.ParquetFilenames,
+                search_terms = new List<string>(searchTermField.Split(" ", StringSplitOptions.RemoveEmptyEntries)),
+                package_name = packageNameField.Trim(),
+                case_sensitive = isCaseSensitiveField,
+                limit = recordLimitField
+            };
+            var query = new { task_name = "task_code_scan", task_arguments = analysisArguments };
+
+            queryString = JsonSerializer.Serialize(query);
+        }
+        else if (analysisTaskField == "tracker_domain_scan")
+        {
+            var analysisArguments = new
+            {
+                app_parquet_basenames = inArchiveResults!.ParquetFilenames,
+                tracker_list_name = domainTrakcerListNameField,
+                limit = recordLimitField
+            };
+            var query = new { task_name = "task_tracker_domain_scan", task_arguments = analysisArguments };
+
+            queryString = JsonSerializer.Serialize(query);
+        }
+        else if (analysisTaskField == "tracker_classname_scan")
+        {
+            var analysisArguments = new
+            {
+                app_parquet_basenames = inArchiveResults!.ParquetFilenames,
+                tracker_list_name = classnameTrakcerListNameField,
+                limit = recordLimitField
+            };
+            var query = new { task_name = "task_tracker_classname_scan", task_arguments = analysisArguments };
+
+            queryString = JsonSerializer.Serialize(query);
+        }
+        else if (analysisTaskField == "permission_scan")
+        {
+            var analysisArguments = new
+            {
+                app_parquet_basenames = inArchiveResults!.ParquetFilenames,
+                limit = recordLimitField
+            };
+            var query = new { task_name = "task_permission_scan", task_arguments = analysisArguments };
+
+            queryString = JsonSerializer.Serialize(query);
+        }
+        else if (analysisTaskField == "url_extraction")
+        {
+            var analysisArguments = new
+            {
+                app_parquet_basenames = inArchiveResults!.ParquetFilenames,
+                limit = recordLimitField
+            };
+            var query = new { task_name = "task_url_extraction", task_arguments = analysisArguments };
+
+            queryString = JsonSerializer.Serialize(query);
+        }
+
+        if (!string.IsNullOrEmpty(queryString))
+        {
+            await hubConnection!.SendAsync("SubmitTask", "analyse_apks", queryString);
+        }
+    }
+
+
+    private async Task loadTheMostRecentlyDownloadedAppIds()
+    {
+        var appIdList = await Http.GetFromJsonAsync<List<string>?>($"app/mostrecent/{autoMostRecentNumber}");
+
+        if (appIdList != null)
+        {
+            appIdsField = string.Join(Environment.NewLine, appIdList);
+        }
+    }
+
+    private async Task performAppIdsInArchiveCheck()
+    {
+        inArchiveResults = null;
+        //if (!_analyseMostRecentAppsInArchive)
+        //{
+        if (appIds.Count() > 0)
+        {
+            var httpResponse = await Http.PostAsJsonAsync<string[]>("app/inarchive", appIds.ToArray());
+            inArchiveResults = await httpResponse.Content.ReadFromJsonAsync<InArchiveCheckResults>();
+        }
+        //}
+
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}

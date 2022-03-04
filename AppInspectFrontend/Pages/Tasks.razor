@@ -1,0 +1,121 @@
+﻿@page "/tasks"
+@using AppInspectDataModels
+@using System.Text.Json
+@inject HttpClient Http
+@inject FrontendSettings settings
+
+<PageTitle>AppInspect - Tasks</PageTitle>
+
+<div class="row">
+    <h1 class="col-auto">Tasks</h1>
+    <div class="col-auto">
+        <button type="button" class="btn btn-link text-primary" @onclick="loadTasks"><span class="oi oi-reload fs-4"></span></button>
+    </div>
+</div>
+
+@if (tasksPagingWindow == null)
+{
+    <p>Loading, please wait ...</p>
+}
+else
+{
+    <table class="table">
+
+        <thead>
+            <tr>
+                <th>Created</th>
+                <th>Action</th>
+                <th>Query</th>
+                <th>Error</th>
+                <th>Results</th>
+                <th>Completed</th>
+                <th>&nbsp;</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            @foreach (AppInspectTask task in tasksPagingWindow)
+            {
+                <tr>
+                    <td>@task.Created</td>
+                    <td>@task.Action</td>
+                    <td>
+                        <textarea readonly class="col-11" rows="1" value=@string.Join('\n', Common.ConvertJsonElementsToKeyValueLines(task.Arguments))>
+                                                                                        </textarea>
+                    </td>
+                    <td>
+                        <textarea readonly class="col-11" rows="1" value=@task.Error>
+                                                                                        </textarea>
+                    </td>
+                    <td>
+                        <textarea readonly class="col-11" rows="1" value=@task.Results>
+                                                                                        </textarea>
+                    </td>
+                    <td>@task.Completed</td>
+                    <td>
+                        @if (task.Action == "analyse_apks")
+                        {
+                            <a href="history/apkanalysis/@(task.Id)" class="link-primary"><span class="oi oi-eye"></span> Open</a>
+                        }
+                        else if (task.Action == "query_googleplay")
+                        {
+                            <a href="history/appstorequery/@(task.Id)" class="link-primary"><span class="oi oi-eye"></span> Open</a>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <Paginator PageCount=@taskPageCount @bind-PageIndex=taskPageIndex @bind-PaginatorStart=@taskPaginatorStart PageSize=@taskPageSize></Paginator>
+}
+
+@code {
+
+    private AppInspectTask[]? _tasks;
+
+    private AppInspectTask[]? tasksPagingWindow
+    {
+        get { return (_tasks == null) ? null : _tasks.Skip(taskPageIndex * taskPageSize).Take(taskPageSize).ToArray(); }
+        set
+        {
+            _tasks = value;
+            if (value != null)
+            {
+                int recordCount = value.Count();
+                int remainder = recordCount % taskPageSize;
+                taskPageCount = ((recordCount - remainder) / taskPageSize) + ((remainder>0)?1:0);
+                taskPageIndex = 0;
+                taskPaginatorStart = 0;
+            }
+        }
+    }
+
+    private int taskPageSize { get; set; } = 10;
+    private int taskPageCount { get; set; } = 0;
+    private int taskPageIndex { get; set; } = 0;
+    private int taskPaginatorStart { get; set; } = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await loadTasks();
+    }
+
+
+    private async Task loadTasks()
+    {
+        tasksPagingWindow = null;
+        tasksPagingWindow = await Http.GetFromJsonAsync<AppInspectTask[]>("task");
+    }
+
+    private string[] listArguments(string argumentsInJson)
+    {
+        var attributes = new List<string>();
+        var args = JsonDocument.Parse(argumentsInJson);
+        foreach (var arg in args.RootElement.EnumerateObject())
+        {
+            attributes.Add($"{arg.Name}: {arg.Value.ToString()}");
+        }
+        return attributes.ToArray();
+    }
+}
